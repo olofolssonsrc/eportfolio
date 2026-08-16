@@ -46,9 +46,7 @@ body { margin:0; color:#1a1a1a; line-height:1.6;
   <p id="tagline">E-portfolio</p>
   <p id="intro">
     Civilingenjörsstudent i informationsteknik på KTH, med masterinriktning mot
-    scientific computing. Här samlar jag mina personliga projekt med länkar till
-    readme, kod på GitHub och demos. Just nu ligger intresset främst i
-    grafikprogrammering och numeriska metoder.
+    scientific computing. Här samlar jag personliga projekt kod finns på github.
   </p>
   <p id="contact">
     Nås bäst på <a href="mailto:olofolsson112233@gmail.com">olofolsson112233@gmail.com</a>
@@ -73,31 +71,11 @@ body { margin:0; color:#1a1a1a; line-height:1.6;
 </div>
 
 <script id="md-wormhole" type="text/markdown">
-Realtidsrenderare för genomträngliga maskhål, allt i en fragment shader. Upp till
-16 maskhål och 6 skyboxvärldar samtidigt.
-
-Strålarna integreras inte steg för steg genom rumtiden. Istället beskrivs varje
-mynning av en tratt med lutningen `dz/dr`, och avböjningen räknas ut med kvadratur
-längs den ytan via Clairaut-invarianten. Strålar som kommer innanför strupradien
-går igenom och kommer ut i andra änden, ofta i en annan värld.
-
-En stråle som böjs kraftigt sprider ut sig, så bredden följs genom varje böj och
-används för att välja mipnivå när skyboxen samplas. Det är sidans kantutjämning.
-
-Maskhålen redigeras live i menyn: storlek, djup, krökning, position och vilka
-världar de kopplar ihop.
+Realtidsrenderare för genomträngliga maskhål, fragment shader.
 </script>
 
 <script id="md-mass" type="text/markdown">
-Går det att se var massorna sitter genom att bara titta på hur en enda partikel
-rör sig? En testpartikel får falla genom fältet från upp till 40 slumpade massor,
-och när banan är färdig försöker sidan räkna baklänges till massfördelningen.
 
-Hastighet och acceleration tas fram numeriskt ur banan. Därefter byggs ett
-vektorfält vars divergens pekar ut var massa borde finnas, och topparna i det
-fältet blir gissningarna — de gula markörerna i bilden.
-
-Ren JavaScript och Canvas 2D, inga bibliotek. Varje lager går att slå av och på.
 </script>
 
 <!-- README renderas med marked + GitHubs egen css -->
