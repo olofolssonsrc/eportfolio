@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { margin:20px; background:#eee; font-family:sans-serif; }
+canvas { background:#fff; border:1px solid #999; display:block; }
+button { margin-bottom:10px; padding:6px 12px; }
+</style>
+</head>
+<body>
+
+<button onclick="reset()">reset</button>
+n <input id="n_input" type="range" min="0" max="40" step="1" value="12">
+<input id="n_vis" type="text" value="12" style="width:50px; "readonly>
+<canvas id="c" width="650" height="550"></canvas>
+m_test <input id="massInput" type="range" min="0.1" max="20" step="0.1" value="1">
+<input id="h-M" type="text" value="1" style="width:50px;" readonly>
+<label><input type="checkbox" id="toggleVel"> velocity</label>
+<label><input type="checkbox" id="toggleAcc"> acceleration</label>
+<label><input type="checkbox" id="toggleVecMag"> h-M</label>
+<label><input type="checkbox" id="toggleVecDir"> h-M'</label>
+<label><input type="checkbox" id="toggleDiv"> divergence</label>
+<label><input type="checkbox" id="toggleProbCube"> pr_field</label>
+
+<label><input type="checkbox" id="togglePred" checked> prediction</label>
+<label><input type="checkbox" id="togglePath" checked> path</label>
+<label><input type="checkbox" id="toggleMasses" checked> masses</label>
+<label><input type="checkbox" id="toggleParticle" checked> particle</label>
+
+<label style="display:none">
+  <input type="checkbox" id="toggleWorkM"> work
+</label>
+
+<script>
+const G = 1;
+const dt = 0.0010;
+const eps = 0.03;
+const MAX_TRAIL = 1800;
+
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
+
+let masses = [];
+let particle = null;
+let trail = [];
+let times = [];
+
+let running = true;
+let predicted = false;
+
+let m_test = 1;
+
+//prediction function variables
+
+let lastTrail = null;
+let velocities = null;
+let accelerations = null;
+let grid = null;
+let vNorm = null;
+let aNorm = null;
+let grid3D = null;
+//let grid3D_dM = null;
+let grid3D_vec = null;
+let grid3D_div = null;
+let grid3D_Prob = null;
+let vecGrid = null;
+let divGrid = null;
+let probGrid = null;
+
+//todo scale acc, vec magnitite in visualisation
+
+let showVel = false;
+let showAcc = false;
+let showVec = true;
+let showVecDir = false;
+let showVecMag = false;
+let showDiv = false;
+let showProb = false;
+let showWork = false;
+let showPred = true;
+let showPath = true;
+let showMasses = true;
+let showParticle = true;
+
+let rafId = null;
+
+let GridDet =100
+WorldScaleX = 4;
+WorldScaleY = 4*(c.height / c.width);
+
+function CanvToWorld(x, y){
+    const xpr = x / c.width;
+    const ypr = y / c.height;
+
+    return {
+      x: (xpr - 0.5) * WorldScaleX,
+      y: (ypr - 0.5) * WorldScaleY
+    };
+}
+
+function WorldToCanv(x, y){
+    const xpr = (x / WorldScaleX) + 0.5;
+    const ypr = (y / WorldScaleY) + 0.5;
+
+    return {
+      x: c.width * xpr,
+      y: c.height * ypr
+    };
+}
+
+function GridToWorld(x, y, size = GridDet){
+    return {
+      x: ((x / size) - 0.5) * WorldScaleX,
+      y: ((y / size) - 0.5) * WorldScaleY
+    };
+}
+
+function GridToWorldCenter(x, y, size = GridDet){
+    return {
+      x: (((x + 0.5) / size) - 0.5) * WorldScaleX,
+      y: (((y + 0.5) / size) - 0.5) * WorldScaleY
+    };
+}
+
+function WorldToGrid(x, y, size = GridDet){
+    return {
+      x: Math.floor(((x / WorldScaleX) + 0.5) * size),
+      y: Math.floor(((y / WorldScaleY) + 0.5) * size)
+    };
+}
+
+
+//result array
+rawBestRes = null;
+
+function reset() {
+    if (rafId !== null) cancelAnimationFrame(rafId);
+
+    masses = [];
+    const n = document.getElementById("n_input").value;
+    for (let i=0;i<n;i++) {
+      masses.push({
+        x:(Math.random()-0.5)*2,
+        y:(Math.random()-0.5)*2,
+        m:  Math.random()*10
+      });
+    }
+
+    particle = {
+      x:(Math.random()-0.5)*2,
+      y:(Math.random()-0.5)*2,
+      vx:(Math.random()-0.5)*1,
+      vy:(Math.random()-0.5)*1
+    };
+    lastTrail = null;
+    velocities = null;
+    accelerations = null;
+    grid = null;
+    vNorm = null;
+    aNorm = null;
+    grid3D = null;
+    trail = [];
+    times = [];
+
+    //grid3D_dM = null;
+    grid3D_vec = null;
+    grid3D_div = null;
+    grid3D_Prob = null;
+    rawBestRes = null;
+
+    running = true;
+    predicted = false;
+
+    loop();
+}
+
+function accel(px, py) {
+  let ax = 0, ay = 0;
+
+  for (const m of masses) {
+    const dx = m.x - px;
+    const dy = m.y - py;
+
+    const r2 = dx*dx + dy*dy + eps*eps;
+    const invR3 = 1 / Math.pow(r2, 1.5);
+
+    ax += G * m.m * dx * invR3;
+    ay += G * m.m * dy * invR3;
+  }
+
+  return [ax, ay];
+}
+
+function step() {
+  const [ax,ay] = accel(particle.x, particle.y);
+
+  particle.vx += ax * dt;
+  particle.vy += ay * dt;
+
+  particle.x += particle.vx * dt;
+  particle.y += particle.vy * dt;
+
+  trail.push({x:particle.x, y:particle.y});
+  times.push(dt);
+
+  if (trail.length >= MAX_TRAIL) {
+    running = false;
+    
+  if (!predicted) {
+      predicted = true;
+      predict(trail, times);
+  }
+  }
+}
+
+//draw path and satelite/particle
+function drawPath() {
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i=0;i<trail.length;i++) {
+      const p = trail[i];
+      const cordsp = WorldToCanv(p.x, p.y);
+      ctx.lineTo(cordsp.x, cordsp.y);
+    }
+        ctx.stroke()
+;
+}
+
+function drawMasses() {
+
+    ctx.fillStyle = "black";
+    for (let m of masses) {
+        const t = Math.min(1, m.m / 10);
+        ctx.fillStyle = `rgb(${255*t},${50},${255*(1-t)})`;
+        const cords = WorldToCanv(m.x, m.y);
+        ctx.beginPath();
+        ctx.arc(cords.x,  cords.y, 6, 0, Math.PI*2);
+        ctx.fill();
+        //console.log(cords)
+        ctx.strokeStyle = "black";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = "turquoise";
+        ctx.fillRect(cords.x + 8, cords.y - 10, 34, 16);
+
+        ctx.fillStyle = "black";
+        ctx.font = "10px sans-serif";
+        ctx.fillText(m.m.toFixed(1), cords.x + 12, cords.y + 2);
+    }
+}
+
+function drawParticle() {
+    const cordspp = WorldToCanv(particle.x, particle.y);
+    ctx.fillStyle = "blue";
+    ctx.beginPath();
+    ctx.arc(cordspp.x,  cordspp.y, 4, 0, Math.PI*2);
+    ctx.fill();
+}
+
+function drawVectors(trail, vectors, color, s=.1) {
+
+    ctx.strokeStyle = color;
+
+    if (!trail || !vectors) return;
+
+    const len = Math.min(trail.length, vectors.length);
+
+    for (let i=0;i<len;i+=10) {
+      const p = trail[i];
+      const v = vectors[i];
+      if (!p || !v) continue;
+
+      coords = WorldToCanv(p.x ,p.y);
+
+      const tip = WorldToCanv(p.x + v.x * s, p.y + v.y * s);
+
+      ctx.beginPath();
+      ctx.moveTo(coords.x,coords.y);
+      ctx.lineTo(tip.x,tip.y);
+      ctx.stroke();
+  }
+}
+
+//checks where a mass of mass test_m would have to be in order to produce current acceletration
+// a "derivative"?.
+//If testing real orbits, change equation const r = Math.sqrt((G * m_test) / (amag + eps * eps));
+//Whole cube will not be used could be optimized. 
+function buildVectorFieldCube(acc, trailin, size=GridDet, mMin=0, mMax=10, steps=GridDet) {
+    let cube = [];
+
+    for (let mi = 0; mi < steps; mi++) {
+
+        const m_test = mMin + (mi / (steps - 1)) * (mMax - mMin);
+
+        let grid = Array.from({ length: size }, () =>
+            Array.from({ length: size }, () => ({ x: 0, y: 0, c: 0 }))
+        );
+
+        for (let i = 0; i < acc.length; i++) {
+            const a = acc[i];
+            const amag = Math.hypot(a.x, a.y) + 1e-9;
+
+            const dx = a.x / amag;
+            const dy = a.y / amag;
+            const r = Math.sqrt((G * m_test) / (amag + eps * eps));
+
+            const px = trailin[i].x + dx * r;
+            const py = trailin[i].y + dy * r;
+
+            const g = WorldToGrid(px, py, size);
+            const gx = g.x;
+            const gy = g.y;
+
+            if (gx >= 0 && gy >= 0 && gx < size && gy < size) {
+                grid[gy][gx].x += a.x;
+                grid[gy][gx].y += a.y;
+                grid[gy][gx].c += r;
+            }
+        }
+        cube[mi] = grid;
+    }
+  return cube;
+}
+
+function drawVectorField(grid, size=GridDet) {
+  for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+
+        const cell = grid[y][x];
+        const center = GridToWorldCenter(x, y, size);
+        const coords = WorldToCanv(center.x, center.y);
+
+        if (showVecMag && cell.c > 0 ) {
+          const strength = Math.max(2, cell.c*1.5);
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(0,200,200,${strength})`;
+          ctx.arc(coords.x, coords.y, strength, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        if (showVecDir && cell.c > 0 ) {
+
+          let vx = cell.x / cell.c;
+          let vy = cell.y / cell.c;
+
+          const mag = Math.hypot(vx, vy);
+          if (mag > 1e-9) {
+            vx /= mag;
+            vy /= mag;
+          }
+
+          const tip = WorldToCanv(
+            center.x + vx * (WorldScaleX / size) * 1.95,
+            center.y + vy * (WorldScaleY / size) * 1.95
+          );
+
+          ctx.strokeStyle = `rgba(100,50,150,0.8)`;
+          ctx.beginPath();
+          ctx.moveTo(coords.x, coords.y);
+          ctx.lineTo(tip.x, tip.y);
+          ctx.stroke();
+        }
+      }
+  }
+}
+
+// derivative to compute divergence for grid squares.
+function buildDivergenceCube(vecCube, size=GridDet) {
+  let cube = [];
+
+  const hx = WorldScaleX / size;
+  const hy = WorldScaleY / size;
+
+  //console.log(vecCube.length)
+  for (let mi = 0; mi < vecCube.length; mi++) {
+    const grid = vecCube[mi];
+    let div = Array.from({ length: size }, () => Array(size).fill(0));
+
+    for (let y = 1; y < size - 1; y++) {
+        for (let x = 1; x < size - 1; x++) {
+          const left  = grid[y][x - 1];
+          const right = grid[y][x + 1];
+          const up    = grid[y - 1][x];
+          const down  = grid[y + 1][x];
+
+          const fx_l = left.c ? left.x / left.c : 0;
+          const fx_r = right.c ? right.x / right.c : 0;
+          const fy_u = up.c ? up.y / up.c : 0;
+          const fy_d = down.c ? down.y / down.c : 0;
+
+          const dFx_dx = (fx_r - fx_l) / (2 * hx);
+          const dFy_dy = (fy_d - fy_u) / (2 * hy);
+
+          const val  = dFx_dx + dFy_dy;
+        
+          div[y][x] = val;
+        }
+    }
+    cube[mi] = div;
+  }
+
+  return cube;
+}
+
+function drawDivergenceField(grid) {
+  const n = grid.length;
+
+  let maxAbs = .1;
+  for (let y=0;y<n;y++)
+    for (let x=0;x<n;x++)
+      if (Math.abs(grid[y][x]) > maxAbs) maxAbs = Math.abs(grid[y][x]);
+
+  for (let y=0;y<n;y++) {
+    for (let x=0;x<n;x++) {
+      const v = grid[y][x] / maxAbs;
+      var a = Math.pow(Math.abs(v), 0.5);
+      //scale values to get better visualisation
+      a*= 2;
+   
+
+      if (v > 0) ctx.fillStyle = `rgba(255,80,80,${a})`;
+      else ctx.fillStyle = `rgba(80,80,255,${a})`;
+
+      const p0 = GridToWorld(x, y, n);
+      const p1 = GridToWorld(x + 1, y + 1, n);
+      const c0 = WorldToCanv(p0.x, p0.y);
+      const c1 = WorldToCanv(p1.x, p1.y);
+
+      ctx.fillRect(c0.x, c0.y, c1.x - c0.x, c1.y - c0.y);
+    }
+  }
+}
+
+//Uses divergence as probability.
+//Some slices or "test_m" could be better than others based on how spread out they are and where they change sign?.
+function buildDivergenceProbabilityCube(divCube, size = GridDet) {
+
+  let prob = Array.from({ length: size }, () =>
+    Array.from({ length: size }, () => 0)
+  );
+
+  const M = divCube.length;
+
+  for (let mi = 0; mi < M; mi++) {
+    const grid = divCube[mi];
+
+    
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const v = grid[y][x];
+        prob[y][x] += Math.max(0,v);
+      }
+    }
+  }
+
+  let max = 0;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      if (prob[y][x] > max) max = prob[y][x];
+    }
+  }
+
+  if (max > 0) {
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        prob[y][x] /= max;
+      }
+    }
+  }
+
+  return prob;
+}
+
+
+function drawProbabilityField(grid) {
+  const n = grid.length;
+
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+
+      const v = grid[y][x];
+
+      ctx.fillStyle = `rgba(0,0,0,${v})`;
+
+      const p0 = GridToWorld(x, y, n);
+      const p1 = GridToWorld(x + 1, y + 1, n);
+      const c0 = WorldToCanv(p0.x, p0.y);
+      const c1 = WorldToCanv(p1.x, p1.y);
+
+      ctx.fillRect(c0.x, c0.y, c1.x - c0.x, c1.y - c0.y);
+    }
+  }
+}
+
+function render() {
+
+  ctx.clearRect(0,0,c.width,c.height);
+
+    if (showVel) drawVectors(lastTrail, vNorm, "green");
+    if (showAcc) drawVectors(lastTrail, aNorm, "purple");
+    if (showPath) drawPath();
+    if (showMasses) drawMasses();
+    if (showParticle) drawParticle();
+
+  //console.log(showVec, showDiv, showProb)
+  //console.log(grid3D_vec, grid3D_vec, grid3D_vec)
+  if(!running && grid3D_vec && grid3D_div && grid3D_Prob){
+
+    //chose correct 3d slice for test visuals
+    if (grid3D_vec && grid3D_vec.length > 0) {
+      const mi = Math.floor((m_test / 20) * (grid3D_vec.length - 1));
+      vecGrid = grid3D_vec[Math.max(0, Math.min(grid3D_vec.length - 1, mi))];
+    } else {
+      vecGrid = null;
+    }
+
+    if (grid3D_div && grid3D_div.length > 0) {
+      const mi = Math.floor((m_test / 20) * (grid3D_div.length - 1));
+      divGrid = grid3D_div[Math.max(0, Math.min(grid3D_div.length - 1, mi))];
+    } else {
+      divGrid = null;
+    }
+
+   //  2d 
+   probGrid = grid3D_Prob;
+
+    if (showVec && vecGrid) drawVectorField(vecGrid);
+
+    if (showDiv && divGrid) drawDivergenceField(divGrid);
+
+    if (showProb && probGrid) drawProbabilityField(probGrid);
+
+    if(showPred && rawBestRes) drawRes(rawBestRes);
+    //if(showWork) drawWorkScalar();
+  }
+}
+
+
+//based on the recorded positions and deltatimes Determine the velovity and forces 
+function predict(trailin, timesin) {
+
+  lastTrail = trailin;
+  velocities = [];
+  accelerations = [];
+
+  for (let i=0;i<trailin.length-1;i++) {
+      const dt=timesin[i];
+      velocities[i]={x:(trailin[i+1].x-trailin[i].x)/dt,y:(trailin[i+1].y-trailin[i].y)/dt};
+  }
+
+  for (let i=0;i<velocities.length-1;i++) {
+      const dt=timesin[i];
+      accelerations[i]={x:(velocities[i+1].x-velocities[i].x)/dt,y:(velocities[i+1].y-velocities[i].y)/dt};
+  }
+
+// for visualization 
+  vNorm = [];
+  aNorm = [];
+
+  for (let i = 0; i < velocities.length; i++) {
+    const v = velocities[i];
+    if (!v) continue;
+    const mv = Math.hypot(v.x, v.y) || 1;
+    vNorm[i] = { x: v.x / mv, y: v.y / mv };
+  }
+
+  for (let i = 0; i < accelerations.length; i++) {
+    const a = accelerations[i];
+    if (!a) continue;
+    const ma = Math.hypot(a.x, a.y) || 1;
+    aNorm[i] = { x: a.x / ma, y: a.y / ma };
+  } 
+
+  const newVec = buildVectorFieldCube(accelerations, lastTrail, GridDet);
+  const newDiv = buildDivergenceCube(newVec, GridDet);
+  const newProb = buildDivergenceProbabilityCube(newDiv, GridDet);
+  
+  //console.log(newProb)
+  grid3D_vec = newVec;
+  grid3D_div = newDiv;
+  grid3D_Prob = newProb;
+  //actually 2d atm
+  //grid3D_Prob2 = gaussian(grid3D_Prob,0.02,1);
+  //grid3D_Prob3 = gaussian(grid3D_Prob2, 0.00, 0.95, 1.4);
+
+  grid3D_Prob = (blur(blur(newProb)))
+
+  const testRes = chosePoint(grid3D_Prob);
+
+  rawBestRes =testRes;
+ // console.log(rawBestRes)
+/*TODO
+  *Use  acceleration/F scalar/vector field to get work?.
+  *Search locally based on conservation of energy in the system?
+  *Add penalty for two close up local maxima or make the kernel allways remove close local maxima.
+  *get better location by chosing a mass for each planet witch is when the divirgence changes. sign there(maybe).
+*/
+
+
+}
+/*
+function kerntnel() {
+  const k = [
+    [0, 1, 2, 1, 0],
+    [1, 4, 6, 4, 1],
+    [2, 6, 20, 6, 2],
+    [1, 4, 6, 4, 1],
+    [0, 1, 2, 1, 0],
+  ];
+
+  const sum = k.flat().reduce((a, b) => a + b, 0);
+
+  return k.map(row => row.map(v => v / sum));
+}
+
+
+function gaussian(grid, threshold = 0.01, strength = 0.90, ppk = 1) {
+  const n = grid.length;
+
+  const kernel = [
+    [0, 0, 1, 0, 0],
+    [0, 2, 4, 2, 0],
+    [1, 4,16, 4, 1],
+    [0, 2, 4, 2, 0],
+    [0, 0, 1, 0, 0],
+  ];
+
+  const K = 44;
+
+  const out = Array.from({ length: n }, () => Array(n).fill(0));
+
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+
+      let acc = 0;
+
+      for (let j = -2; j <= 2; j++) {
+        for (let i = -2; i <= 2; i++) {
+
+          const yy = Math.min(n - 1, Math.max(0, y + j));
+          const xx = Math.min(n - 1, Math.max(0, x + i));
+
+          acc += grid[yy][xx] * kernel[j + 2][i + 2];
+        }
+      }
+
+      let val = (acc / K);
+      val = Math.pow(val, ppk)
+      val = val * strength;
+      if (val < threshold) {
+        val = 0;
+      }
+
+      out[y][x] = val;
+    }
+  }
+
+  return out;
+}
+
+*/
+//draw result planets
+function drawRes(mask, size = GridDet) {
+
+  const n = mask.length;
+
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+
+      const wx = ((x + 0.5) / n) * WorldScaleX - WorldScaleX * 0.5;
+      const wy = ((y + 0.5) / n) * WorldScaleY - WorldScaleY * 0.5;
+      const { x: px, y: py } = WorldToCanv(wx, wy);
+
+      const sx = c.width / n;
+
+      if (mask[y][x]) {
+
+        ctx.fillStyle = "yellow";
+        ctx.beginPath();
+        ctx.arc(px, py, sx*0.75, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "hotpink";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+  }
+}
+//pyrmamid like blur was better than gauss
+function blur2(g) {
+  const n = g.length;
+  const out = Array.from({ length: n }, () => Array(n).fill(0));
+
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+
+      let best = 0;
+
+      for (let ky = -1; ky <= 1; ky++) {
+        for (let kx = -1; kx <= 1; kx++) {
+
+          const yy = Math.min(n - 1, Math.max(0, y + ky));
+          const xx = Math.min(n - 1, Math.max(0, x + kx));
+
+          const dist = Math.abs(kx) + Math.abs(ky);
+          const v = g[yy][xx] - (dist * dist) * 0.02;
+
+          if (v > best) best = v;
+        }
+      }
+
+      out[y][x] = Math.max(0, best);
+    }
+  }
+
+  return out;
+}
+
+function blur(g) {
+  const n = g.length;
+  const out = Array.from({ length: n }, () => Array(n).fill(0));
+
+  const kernel = [
+    [0.5, 2, 0.5],
+    [2, 4, 2],
+    [0.5, 2, 0.5],
+  ];
+
+
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+
+      let sum = 0;
+      let weight = 0;
+
+      for (let ky = 0; ky < 3; ky++) {
+        for (let kx = 0; kx < 3; kx++) {
+
+          const yy = Math.min(n - 1, Math.max(0, y + ky - 1));
+          const xx = Math.min(n - 1, Math.max(0, x + kx - 1));
+
+          const w = kernel[ky][kx];
+
+          sum += g[yy][xx] * w*1.3;
+          weight += w;
+        }
+      }
+
+      //const val = (sum / weight);
+      out[y][x] = sum / weight;
+    }
+  }
+
+  return out;
+}
+function chosePoint(g) {
+    const n = g.length;
+
+    const mask = Array.from({ length: n }, () => Array(n).fill(0));
+    const score = Array.from({ length: n }, () => Array(n).fill(0));
+
+    const dirs = [
+      [1,0],[-1,0],[0,1],[0,-1],
+      [1,1],[1,-1],[-1,1],[-1,-1]
+    ];
+
+    const cutoff = 0.015;
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (g[y][x] < cutoff) g[y][x] = 0;
+      }
+    }
+
+    // only works (kindoff) since the shape is made more smooth by blur.
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+
+        let cx = x, cy = y;
+
+        while (true) {
+            let bestX = cx, bestY = cy;
+            let bestV = g[cy][cx];
+
+          for (let i = 0; i < 8; i++) {
+              let nx = cx + dirs[i][0];
+              let ny = cy + dirs[i][1];
+
+              if (nx < 0 || ny < 0 || nx >= n || ny >= n){
+                  continue;
+              } 
+
+              let v = g[ny][nx];
+              if (v > bestV) {
+                  bestV = v;
+                  bestX = nx;
+                  bestY = ny;
+              }
+          }
+          if (bestX === cx && bestY === cy) break;
+
+          cx = bestX;
+          cy = bestY;
+        }
+        score[cy][cx] += g[y][x];
+      }
+    }
+
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        let v = score[y][x];
+        if (v > 0) mask[y][x] = 1;
+      }
+    }
+
+    return mask;
+}
+
+document.getElementById("massInput").addEventListener("input",(e)=>{
+  m_test=parseFloat(e.target.value);
+  document.getElementById("h-M").value = m_test.toFixed(1);
+    render();
+});
+
+document.getElementById("n_input").addEventListener("input",(e)=>{
+  n=parseInt(e.target.value);
+  document.getElementById("n_vis").value =n ;
+
+});
+
+document.getElementById("toggleVel").onclick=()=>{
+  showVel=!showVel;
+  document.getElementById("toggleVel").innerText="velocity: "+(showVel?"on":"off");
+  render();
+};
+
+document.getElementById("toggleAcc").onclick=()=>{
+  showAcc=!showAcc;
+  document.getElementById("toggleAcc").innerText="acceleration: "+(showAcc?"on":"off");
+  render();
+};
+
+document.getElementById("toggleVecDir").onclick=()=>{
+  showVecDir=!showVecDir;
+  document.getElementById("toggleVecDir").innerText="h-M': "+(showVecDir?"on":"off");
+  render();
+};
+
+document.getElementById("toggleVecMag").onclick=()=>{
+  showVecMag=!showVecMag;
+  document.getElementById("toggleVecMag").innerText="h-M': "+(showVecMag?"on":"off");
+  render();
+};
+
+
+document.getElementById("toggleDiv").onclick=()=>{
+  showDiv=!showDiv;
+  document.getElementById("toggleDiv").innerText="divergence: "+(showDiv?"on":"off");
+  render();
+};
+document.getElementById("toggleProbCube").onclick=()=>{
+  showProb=!showProb;
+  document.getElementById("toggleProbCube").innerText="pr_field: "+(showProb?"on":"off");
+  render();
+};
+document.getElementById("toggleWorkM").onclick=()=>{
+  showWork=!showWork;
+  document.getElementById("toggleWorkM").innerText="work: "+(showWork?"on":"off");
+  render();
+};
+document.getElementById("togglePred").onclick=()=>{
+  showPred=!showPred;
+  document.getElementById("togglePred").innerText="preditcion: "+(showPred?"on":"off");
+  render();
+};
+document.getElementById("togglePath").onclick=()=>{
+  showPath=!showPath;
+  document.getElementById("togglePath").innerText="path: "+(showPath?"on":"off");
+  render();
+};
+document.getElementById("toggleParticle").onclick=()=>{
+  showParticle=!showParticle;
+  document.getElementById("toggleParticle").innerText="particle: "+(showParticle?"on":"off");
+  render();
+};
+document.getElementById("toggleMasses").onclick=()=>{
+  showMasses=!showMasses;
+  document.getElementById("toggleMasses").innerText="masses: "+(showMasses?"on":"off");
+  render();
+};
+
+function loop(){
+  if(!running) return;
+  for(let i=0;i<2;i++)step();
+
+  render();
+
+  rafId = requestAnimationFrame(loop);
+}
+
+reset();
+</script>
+
+</body></html>
