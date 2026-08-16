@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Olof Olsson — E-portfolio</title>
+
+<script id="frag" type="x-shader/x-fragment">
+precision highp float;
+uniform vec2 u_resolution;
+uniform float u_time;
+void main(){
+  vec2 uv = gl_FragCoord.xy / u_resolution;
+  gl_FragColor = vec4(uv.x * 0.3, uv.y * 0.3, 0.5 + 0.5 * sin(u_time), 1.0);
+}
+</script>
+
+<style>
+body { margin:0; color:#1a1a1a; line-height:1.6;
+       font-family:system-ui, -apple-system, "Segoe UI", sans-serif; }
+#bg { position:fixed; inset:0; z-index:-1; }
+#card { max-width:800px; margin:48px auto; padding:44px 40px; background:#fff;
+        border-radius:10px; box-shadow:0 2px 24px rgba(0,0,0,.18); }
+#card > h1 { margin:0 0 2px; font-size:1.9rem; letter-spacing:-.02em; }
+#tagline { margin:0 0 14px; font-size:.72rem; letter-spacing:.09em;
+           text-transform:uppercase; color:#8a8a99; }
+#intro { color:#555; margin:0 0 10px; max-width:60ch; }
+#contact { color:#555; margin:0 0 36px; font-size:.92rem; }
+#contact a { color:#3a5bd9; }
+.project { background:#f6f6f9; border:1px solid #e4e4ec; border-radius:8px;
+           padding:24px; margin-bottom:24px; }
+.project h2 { margin:0 0 14px; font-size:1.2rem; }
+.project img { max-width:340px; width:100%; display:block; border-radius:6px; margin-bottom:14px; }
+.project a { color:#3a5bd9; }
+.label { margin:24px 0 0; padding-top:18px; border-top:1px solid #e4e4ec;
+         font-size:.72rem; letter-spacing:.09em; text-transform:uppercase; color:#8a8a99; }
+.markdown-body { background:transparent; margin-top:10px; }
+</style>
+</head>
+<body>
+
+<canvas id="bg"></canvas>
+
+<div id="card">
+  <h1>Olof Olsson</h1>
+  <p id="tagline">E-portfolio</p>
+  <p id="intro">
+    Civilingenjörsstudent i informationsteknik på KTH, med masterinriktning mot
+    scientific computing. Här samlar jag mina personliga projekt med länkar till
+    readme, kod på GitHub och demos. Just nu ligger intresset främst i
+    grafikprogrammering och numeriska metoder.
+  </p>
+  <p id="contact">
+    Nås bäst på <a href="mailto:olofolsson112233@gmail.com">olofolsson112233@gmail.com</a>
+    · <a href="https://github.com/olofolssonsrc">github.com/olofolssonsrc</a>
+  </p>
+
+  <div class="project">
+    <h2>Wormhole Renderer</h2>
+    <img src="images/wh.png" alt="">
+    <a href="https://github.com/olofolssonsrc/wormhole">GitHub</a>
+    <p class="label">README från GitHub</p>
+    <div class="markdown-body" data-readme="md-wormhole"></div>
+  </div>
+
+  <div class="project">
+    <h2>Mass Distribution Prediction</h2>
+    <img src="images/massdit.png" alt="">
+    <a href="https://github.com/olofolssonsrc/Mass_Distribution_Prediction">GitHub</a>
+    <p class="label">README från GitHub</p>
+    <div class="markdown-body" data-readme="md-mass"></div>
+  </div>
+</div>
+
+<script id="md-wormhole" type="text/markdown">
+Realtidsrenderare för genomträngliga maskhål, allt i en fragment shader. Upp till
+16 maskhål och 6 skyboxvärldar samtidigt.
+
+Strålarna integreras inte steg för steg genom rumtiden. Istället beskrivs varje
+mynning av en tratt med lutningen `dz/dr`, och avböjningen räknas ut med kvadratur
+längs den ytan via Clairaut-invarianten. Strålar som kommer innanför strupradien
+går igenom och kommer ut i andra änden, ofta i en annan värld.
+
+En stråle som böjs kraftigt sprider ut sig, så bredden följs genom varje böj och
+används för att välja mipnivå när skyboxen samplas. Det är sidans kantutjämning.
+
+Maskhålen redigeras live i menyn: storlek, djup, krökning, position och vilka
+världar de kopplar ihop.
+</script>
+
+<script id="md-mass" type="text/markdown">
+Går det att se var massorna sitter genom att bara titta på hur en enda partikel
+rör sig? En testpartikel får falla genom fältet från upp till 40 slumpade massor,
+och när banan är färdig försöker sidan räkna baklänges till massfördelningen.
+
+Hastighet och acceleration tas fram numeriskt ur banan. Därefter byggs ett
+vektorfält vars divergens pekar ut var massa borde finnas, och topparna i det
+fältet blir gissningarna — de gula markörerna i bilden.
+
+Ren JavaScript och Canvas 2D, inga bibliotek. Varje lager går att slå av och på.
+</script>
+
+<!-- README renderas med marked + GitHubs egen css -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css@5/github-markdown-light.css">
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script>
+document.querySelectorAll('[data-readme]').forEach(el => {
+  el.innerHTML = marked.parse(document.getElementById(el.dataset.readme).textContent);
+});
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script>
+const renderer = new THREE.WebGLRenderer({ canvas: bg });
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const uniforms = { u_time: { value: 0 }, u_resolution: { value: new THREE.Vector2() } };
+
+scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader: 'void main(){ gl_Position = vec4(position, 1.0); }',
+  fragmentShader: frag.textContent
+})));
+
+addEventListener('resize', resize);
+function resize(){
+  renderer.setSize(innerWidth, innerHeight);
+  uniforms.u_resolution.value.set(innerWidth, innerHeight);
+}
+resize();
+
+renderer.setAnimationLoop(t => {
+  uniforms.u_time.value = t / 1000;
+  renderer.render(scene, camera);
+});
+</script>
+
+</body>
+</html>
